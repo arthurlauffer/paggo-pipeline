@@ -28,6 +28,14 @@ export async function GET(req: NextRequest) {
       display_name = data.name  ?? null
     } catch { /* non-fatal */ }
 
+    if (!tokens.refresh_token) {
+      // Google só devolve refresh_token no primeiro consentimento, a menos que
+      // prompt=consent force. Sem ele a conexão não persiste além de ~1h.
+      return NextResponse.redirect(
+        new URL('/?calendar_error=' + encodeURIComponent('Google não retornou refresh_token. Revogue o acesso do app em myaccount.google.com/permissions e conecte novamente.'), origin)
+      )
+    }
+
     await saveTokens({
       access_token:  tokens.access_token,
       refresh_token: tokens.refresh_token,
@@ -37,8 +45,11 @@ export async function GET(req: NextRequest) {
     })
 
     return NextResponse.redirect(new URL('/?calendar_connected=1', origin))
-  } catch (e) {
+  } catch (e: any) {
     console.error('[google-callback] Error:', e)
-    return NextResponse.redirect(new URL('/?calendar_error=oauth_failed', origin))
+    const detail = e?.response?.data?.error_description || e?.message || String(e)
+    return NextResponse.redirect(
+      new URL('/?calendar_error=' + encodeURIComponent(detail), origin)
+    )
   }
 }

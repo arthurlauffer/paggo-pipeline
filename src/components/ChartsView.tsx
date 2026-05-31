@@ -67,7 +67,10 @@ function toWeekly(rows: { day: string; count: number }[]) {
   if (!rows.length) return []
   const buckets = new Map<string, number>()
   for (const r of rows) {
-    const d = new Date(r.day + 'T00:00:00')
+    // `day` may arrive as 'YYYY-MM-DD' (SQLite) or a full ISO timestamp
+    // 'YYYY-MM-DDT00:00:00.000Z' (Postgres) — normalize to the date part first.
+    const d = new Date(String(r.day).slice(0, 10) + 'T00:00:00')
+    if (isNaN(d.getTime())) continue
     const monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay() + 6) % 7))
     const key = monday.toISOString().slice(0, 10)
     buckets.set(key, (buckets.get(key) || 0) + r.count)

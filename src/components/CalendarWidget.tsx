@@ -547,6 +547,20 @@ export function CalendarWidget() {
   const [status,  setStatus]  = useState<{ connected: boolean; email: string | null } | null>(null)
   const [events,  setEvents]  = useState<CalEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [connectError, setConnectError] = useState<string | null>(null)
+
+  // Surface OAuth callback errors passed back via ?calendar_error=...
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const err = params.get('calendar_error')
+    if (err) setConnectError(err)
+    if (err || params.get('calendar_connected')) {
+      params.delete('calendar_error'); params.delete('calendar_connected')
+      const qs = params.toString()
+      window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''))
+    }
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -587,6 +601,11 @@ export function CalendarWidget() {
         <p className="text-xs text-slate-500 mb-4 leading-relaxed">
           Conecte seu Google Calendar para ver seus próximos compromissos aqui e vinculá-los a deals.
         </p>
+        {connectError && (
+          <div className="mb-4 rounded-lg px-3 py-2 text-[11px] leading-relaxed text-red-300" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+            <span className="font-semibold">Falha ao conectar:</span> {connectError}
+          </div>
+        )}
         <a
           href="/api/auth/google"
           className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
