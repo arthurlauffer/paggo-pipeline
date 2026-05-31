@@ -1,11 +1,9 @@
 import { NextResponse } from 'next/server'
 import { queryOne, run } from '@/lib/db'
 import { computeRisk } from '@/lib/risk'
-import { seedActivity } from '@/lib/seed-activity'
 import Papa from 'papaparse'
 
 export const dynamic = 'force-dynamic'
-
 export const maxDuration = 60
 
 interface CsvRow {
@@ -16,11 +14,13 @@ interface CsvRow {
   productInterest: string; previousDealsWithAccount: string
 }
 
+// Number of rows per bulk INSERT — keeps param count well below Postgres's 65535 limit
+const BATCH_SIZE = 500
+
 export async function POST() {
-  // Try to load CSV: first from /data/deals.csv (local), then from /deals.csv (public/)
   let csvContent: string | null = null
 
-  // In Node.js environments (local dev / non-edge), try filesystem first
+  // Try filesystem first (local dev)
   try {
     const fs   = await import('fs')
     const path = await import('path')
@@ -31,19 +31,16 @@ export async function POST() {
     ].filter(Boolean) as string[]
 
     for (const p of candidates) {
-      if (fs.existsSync(p)) {
-        csvContent = fs.readFileSync(p, 'utf8')
-        break
-      }
+      if (fs.existsSync(p)) { csvContent = fs.readFileSync(p, 'utf8'); break }
     }
-  } catch { /* running in edge/serverless without fs */ }
+  } catch { /* edge/serverless */ }
 
-  // Fallback: fetch from public/ (works on Vercel)
+  // Fallback: fetch from public/ (Vercel)
   if (!csvContent) {
     try {
       const base = process.env.NEXT_PUBLIC_BASE_URL
         || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
-      const res  = await fetch(`${base}/data/deals.csv`)
+      const res = await fetch(`${base}/data/deals.csv`)
       if (res.ok) csvContent = await res.text()
     } catch { /* ignore */ }
   }
@@ -59,14 +56,53 @@ export async function POST() {
   const rows   = parsed.data
   const now    = new Date().toISOString()
 
-  for (const row of rows) {
+  // Pre-compute all row data (risk + parsed values) — pure JS, no DB calls
+  const rowData = rows.map(row => {
     const risk = computeRisk({
-      stage: row.stage as any, amount: parseFloat(row.amount) || 0,
-      expectedCloseDate: row.expectedCloseDate, lastActivityAt: row.lastActivityAt || null,
+      stage: row.stage as any,
+      amount: parseFloat(row.amount) || 0,
+      expectedCloseDate: row.expectedCloseDate,
+      lastActivityAt: row.lastActivityAt || null,
       daysInCurrentStage: parseInt(row.daysInCurrentStage) || 0,
       contactsLogged: parseInt(row.contactsLogged) || 0,
       accountSegment: row.accountSegment,
     })
+    return [
+      row.dealId,
+      row.accountName,
+      row.accountSegment,
+      row.industry,
+      row.ownerName,
+      row.stage,
+      parseFloat(row.amount) || 0,
+      row.createdAt,
+      row.expectedCloseDate,
+      row.lastActivityAt || null,
+      row.lastActivityType || null,
+      parseInt(row.daysInCurrentStage) || 0,
+      parseInt(row.contactsLogged) || 0,
+      row.source,
+      row.productInterest,
+      parseInt(row.previousDealsWithAccount) || 0,
+      risk.score,
+      JSON.stringify(risk.flags),
+      risk.level,
+      now,
+    ]
+  })
+
+  const COLS = 20 // columns per row (must match rowData array length above)
+
+  // Bulk INSERT in batches — far fewer round-trips than one query per row
+  for (let b = 0; b < rowData.length; b += BATCH_SIZE) {
+    const batch  = rowData.slice(b, b + BATCH_SIZE)
+    const values: unknown[] = []
+
+    const placeholders = batch.map((rd, i) => {
+      values.push(...rd)
+      const base = i * COLS
+      return `(${Array.from({ length: COLS }, (_, j) => `$${base + j + 1}`).join(',')})`
+    }).join(',')
 
     await run(`
       INSERT INTO deals (
@@ -74,7 +110,7 @@ export async function POST() {
         "createdAt","expectedCloseDate","lastActivityAt","lastActivityType",
         "daysInCurrentStage","contactsLogged",source,"productInterest",
         "previousDealsWithAccount","riskScore","riskFlags","riskLevel","updatedAt"
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$8)
+      ) VALUES ${placeholders}
       ON CONFLICT ("dealId") DO UPDATE SET
         "accountName"=EXCLUDED."accountName","accountSegment"=EXCLUDED."accountSegment",
         industry=EXCLUDED.industry,"ownerName"=EXCLUDED."ownerName",stage=EXCLUDED.stage,
@@ -85,20 +121,10 @@ export async function POST() {
         "previousDealsWithAccount"=EXCLUDED."previousDealsWithAccount",
         "riskScore"=EXCLUDED."riskScore","riskFlags"=EXCLUDED."riskFlags",
         "riskLevel"=EXCLUDED."riskLevel","updatedAt"=EXCLUDED."updatedAt"
-    `, [
-      row.dealId, row.accountName, row.accountSegment, row.industry, row.ownerName, row.stage,
-      parseFloat(row.amount) || 0, row.createdAt, row.expectedCloseDate,
-      row.lastActivityAt || null, row.lastActivityType || null,
-      parseInt(row.daysInCurrentStage) || 0, parseInt(row.contactsLogged) || 0,
-      row.source, row.productInterest, parseInt(row.previousDealsWithAccount) || 0,
-      risk.score, JSON.stringify(risk.flags), risk.level,
-    ])
+    `, values)
   }
 
-  let activity = { dealsTouched: 0, activities: 0, comments: 0 }
-  try { activity = await seedActivity(500) } catch (e) { console.error('[seed] activity seeding failed:', e) }
-
-  return NextResponse.json({ seeded: rows.length, activity })
+  return NextResponse.json({ seeded: rows.length, note: 'Chame POST /api/seed/activity para gerar atividades de exemplo.' })
 }
 
 export async function GET() {
