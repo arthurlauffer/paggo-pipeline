@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# Environment variables (NUNCA sobe isso pro GitHub!)
+.env
+.env.local
+.env*.local
+
+# SQLite (banco local, não precisa subir)
+*.db
+*.db-shm
+*.db-wal
+data/pipeline.db*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts

@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Background ─────────────────────────────────────────────────────────────── */
+
+@layer base {
+  html, body {
+    height: 100%;
+  }
+
+  body {
+    color: #f1f5f9;
+    /* Rich dark gradient — gives glass surfaces something to refract */
+    background-color: #07060e;
+    background-image:
+      radial-gradient(ellipse at 10% 40%,  rgba(79,  70, 229, 0.18) 0%, transparent 55%),
+      radial-gradient(ellipse at 88% 12%,  rgba(124, 58, 237, 0.12) 0%, transparent 55%),
+      radial-gradient(ellipse at 55% 92%,  rgba(37,  99, 235, 0.10) 0%, transparent 55%),
+      radial-gradient(ellipse at 78% 62%,  rgba(168, 85, 247, 0.07) 0%, transparent 45%),
+      radial-gradient(ellipse at 35% 75%,  rgba(99,  102,241, 0.06) 0%, transparent 40%);
+  }
+}
+
+/* ── Glass utilities ─────────────────────────────────────────────────────────── */
+
+@layer utilities {
+
+  /* Light glass — for embedded surfaces (table header, filter bar, sidebar) */
+  .glass {
+    background: linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.055) 0%,
+      rgba(255, 255, 255, 0.025) 100%
+    );
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+
+  /* Medium glass — for cards, panels, larger sections */
+  .glass-md {
+    background: linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.07) 0%,
+      rgba(255, 255, 255, 0.03) 100%
+    );
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.13);
+  }
+
+  /* Strong glass — for floating elements (dropdowns, chat panel, modals) */
+  .glass-strong {
+    background: linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.10) 0%,
+      rgba(255, 255, 255, 0.045) 100%
+    );
+    backdrop-filter: blur(40px) saturate(200%);
+    -webkit-backdrop-filter: blur(40px) saturate(200%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow:
+      0 20px 60px rgba(0, 0, 0, 0.55),
+      0 4px 16px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.15);
+  }
+
+  /* Dark menu glass — for dropdowns, context menus, notification panels.
+     Significantly darker base so text stays readable regardless of background. */
+  .glass-menu {
+    background: rgba(10, 9, 22, 0.93);
+    backdrop-filter: blur(32px) saturate(180%);
+    -webkit-backdrop-filter: blur(32px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow:
+      0 16px 48px rgba(0, 0, 0, 0.60),
+      0 4px 12px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  }
+
+  /* Input / select glass */
+  .glass-input {
+    background: rgba(255, 255, 255, 0.045);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    color: #e2e8f0;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .glass-input:focus {
+    background: rgba(255, 255, 255, 0.065);
+    border-color: rgba(99, 102, 241, 0.55);
+    outline: none;
+  }
+  .glass-input option {
+    background: #110f1e;
+    color: #e2e8f0;
+  }
+
+  /* Indigo accent glass — active / selected states */
+  .glass-accent {
+    background: rgba(99, 102, 241, 0.12);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    box-shadow: inset 0 1px 0 rgba(165, 180, 252, 0.1);
+  }
+
+  /* Menu / dropdown glass — opaque dark base for readability */
+  .glass-menu {
+    background: rgba(13, 11, 26, 0.94);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    box-shadow:
+      0 24px 64px rgba(0, 0, 0, 0.70),
+      0 4px 16px rgba(0, 0, 0, 0.40),
+      inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  }
+
+  /* Divider */
+  .glass-divider {
+    border-color: rgba(255, 255, 255, 0.07);
+  }
+}
+
+@layer components {
+  .btn-secondary {
+    @apply px-3 py-2 rounded-xl text-slate-300 transition-colors
+           flex items-center justify-center gap-1.5;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+  }
+  .btn-secondary:hover {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.14);
+  }
+}
