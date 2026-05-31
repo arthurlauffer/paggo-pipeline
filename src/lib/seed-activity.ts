@@ -1,4 +1,4 @@
-import { query, queryOne, run } from './db'
+import { query, run } from './db'
 import { computeRisk } from './risk'
 import { TEAM_MEMBERS } from './types'
 
@@ -99,35 +99,38 @@ export interface SeedActivityResult {
   comments:     number
 }
 
-/**
- * Populates activities + comments for a sample of (mostly open) deals.
- * Async — uses Postgres via @/lib/db helpers.
- */
+// Build a bulk INSERT SQL from rows of values
+function bulkInsert(table: string, cols: string[], rows: unknown[][]): [string, unknown[]] {
+  const values: unknown[] = []
+  const COLS = cols.length
+  const placeholders = rows.map((row, i) => {
+    values.push(...row)
+    return `(${row.map((_, j) => `$${i * COLS + j + 1}`).join(',')})`
+  }).join(',')
+  const quoted = cols.map(c => c.includes('"') ? c : `"${c}"`).join(',')
+  return [`INSERT INTO ${table} (${quoted}) VALUES ${placeholders}`, values]
+}
+
 export async function seedActivity(sampleSize = 500): Promise<SeedActivityResult> {
   const [openDeals, closedDeals] = await Promise.all([
     query<any>(`
-      SELECT "dealId", "ownerName", stage, amount, "expectedCloseDate", "daysInCurrentStage",
-             "contactsLogged", "accountSegment", "riskScore"
-      FROM deals
-      WHERE stage NOT IN ('CLOSED_WON','CLOSED_LOST')
-      ORDER BY RANDOM()
-      LIMIT $1
+      SELECT "dealId","ownerName",stage,amount,"expectedCloseDate","daysInCurrentStage",
+             "contactsLogged","accountSegment","riskScore"
+      FROM deals WHERE stage NOT IN ('CLOSED_WON','CLOSED_LOST')
+      ORDER BY RANDOM() LIMIT $1
     `, [Math.floor(sampleSize * 0.85)]),
     query<any>(`
-      SELECT "dealId", "ownerName", stage, amount, "expectedCloseDate", "daysInCurrentStage",
-             "contactsLogged", "accountSegment", "riskScore"
-      FROM deals
-      WHERE stage IN ('CLOSED_WON','CLOSED_LOST')
-      ORDER BY RANDOM()
-      LIMIT $1
+      SELECT "dealId","ownerName",stage,amount,"expectedCloseDate","daysInCurrentStage",
+             "contactsLogged","accountSegment","riskScore"
+      FROM deals WHERE stage IN ('CLOSED_WON','CLOSED_LOST')
+      ORDER BY RANDOM() LIMIT $1
     `, [Math.ceil(sampleSize * 0.15)]),
   ])
 
   const deals = [...openDeals, ...closedDeals]
   const now   = new Date().toISOString()
 
-  // Load teams for @team mentions
-  const teamRows = await query<{ name: string; memberIds: string }>('SELECT name, "memberIds" FROM teams')
+  const teamRows = await query<{ name: string; memberIds: string }>('SELECT name,"memberIds" FROM teams')
   const teams = teamRows.map(t => {
     let ids: string[] = []
     try { ids = JSON.parse(t.memberIds || '[]') } catch { ids = [] }
@@ -140,15 +143,19 @@ export async function seedActivity(sampleSize = 500): Promise<SeedActivityResult
     run(`DELETE FROM comments   WHERE "authorId" LIKE 'seed-%'`),
   ])
 
-  let activityCount = 0
-  let commentCount  = 0
+  // ── Build all rows in memory first ────────────────────────────────────────
+  const activityRows:  unknown[][] = []
+  const auditRows:     unknown[][] = []
+  const nextStepRows:  unknown[][] = []
+  const commentRows:   unknown[][] = []
+  const dealUpdates:   { dealId: string; lastAt: string; lastType: string; risk: any }[] = []
 
   for (const deal of deals) {
-    const isClosed   = deal.stage === 'CLOSED_WON' || deal.stage === 'CLOSED_LOST'
-    const nActs      = randInt(2, 6)
+    const isClosed = deal.stage === 'CLOSED_WON' || deal.stage === 'CLOSED_LOST'
+    const nActs    = randInt(2, 6)
     const dayOffsets = Array.from({ length: nActs }, () =>
       Math.random() < 0.45 ? randInt(0, 6) : randInt(7, 45)
-    ).sort((a, b) => b - a)
+    ).sort((a: number, b: number) => b - a)
 
     let lastAt: string | null   = null
     let lastType: string | null = null
@@ -156,35 +163,22 @@ export async function seedActivity(sampleSize = 500): Promise<SeedActivityResult
     for (const off of dayOffsets) {
       const type = pick(ACTIVITY_TYPES)
       const at   = daysAgoISO(off)
-      await run(`
-        INSERT INTO activities ("dealId", type, notes, "activityAt", "isNextStep", "isCompleted", "dueAt", "createdAt", "createdBy")
-        VALUES ($1, $2, $3, $4, 0, 1, NULL, $4, 'seed')
-      `, [deal.dealId, type, pick(ACTIVITY_TEMPLATES[type]), at])
-
-      await run(`
-        INSERT INTO audit_log ("dealId", action, "newValue", notes, "performedBy", "originatedBy", "createdAt")
-        VALUES ($1, 'ACTIVITY_LOGGED', $2, '', $3, 'user', $4)
-      `, [deal.dealId, type, deal.ownerName, at])
-
-      activityCount++
+      activityRows.push([deal.dealId, type, pick(ACTIVITY_TEMPLATES[type]), at, 0, 1, null, at, 'seed'])
+      auditRows.push([deal.dealId, 'ACTIVITY_LOGGED', type, '', deal.ownerName, 'user', at])
       if (!lastAt || at > lastAt) { lastAt = at; lastType = type }
     }
 
     if (!isClosed && Math.random() < 0.7) {
       const type = pick(ACTIVITY_TYPES)
       const due  = daysFromNowISO(randInt(1, 10))
-      await run(`
-        INSERT INTO activities ("dealId", type, notes, "activityAt", "isNextStep", "isCompleted", "dueAt", "createdAt", "createdBy")
-        VALUES ($1, $2, $3, $4, 1, 0, $4, $5, 'seed')
-      `, [deal.dealId, type, pick(NEXTSTEP_TEMPLATES[type]), due, now])
-      activityCount++
+      nextStepRows.push([deal.dealId, type, pick(NEXTSTEP_TEMPLATES[type]), due, 1, 0, due, now, 'seed'])
     }
 
     const nComments = Math.random() < 0.55 ? randInt(1, 3) : 0
     for (let i = 0; i < nComments; i++) {
-      const tpl      = pick(COMMENT_TEMPLATES)
-      const author   = pick(TEAM_MEMBERS)
-      let content    = tpl.text
+      const tpl    = pick(COMMENT_TEMPLATES)
+      const author = pick(TEAM_MEMBERS)
+      let content  = tpl.text
       const mentioned: string[] = []
 
       if (tpl.mention === 'peer') {
@@ -205,24 +199,67 @@ export async function seedActivity(sampleSize = 500): Promise<SeedActivityResult
           mentioned.push(target.id)
         }
       }
-
       const id = `CMT-seed-${deal.dealId}-${i}-${Math.random().toString(36).slice(2, 6)}`
-      await run(`
-        INSERT INTO comments (id, "dealId", "authorId", "authorName", content, "mentionedUsers", "createdAt")
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-      `, [id, deal.dealId, `seed-${author.id}`, author.name, content, JSON.stringify(mentioned), daysAgoISO(randInt(0, 30))])
-      commentCount++
+      commentRows.push([id, deal.dealId, `seed-${author.id}`, author.name, content, JSON.stringify(mentioned), daysAgoISO(randInt(0, 30))])
     }
 
     if (lastAt && !isClosed) {
       const risk = computeRisk({ ...deal, lastActivityAt: lastAt })
-      await run(`
-        UPDATE deals SET "lastActivityAt" = $1, "lastActivityType" = $2,
-          "riskScore" = $3, "riskFlags" = $4, "riskLevel" = $5, "updatedAt" = $6
-        WHERE "dealId" = $7
-      `, [lastAt, lastType, risk.score, JSON.stringify(risk.flags), risk.level, now, deal.dealId])
+      dealUpdates.push({ dealId: deal.dealId, lastAt, lastType: lastType!, risk })
     }
   }
 
-  return { dealsTouched: deals.length, activities: activityCount, comments: commentCount }
+  // ── Bulk INSERT everything ────────────────────────────────────────────────
+  const ABATCH = 200
+
+  // Activities
+  for (let i = 0; i < activityRows.length; i += ABATCH) {
+    const [sql, vals] = bulkInsert('activities',
+      ['"dealId"', 'type', 'notes', '"activityAt"', '"isNextStep"', '"isCompleted"', '"dueAt"', '"createdAt"', '"createdBy"'],
+      activityRows.slice(i, i + ABATCH))
+    await run(sql, vals)
+  }
+
+  // Next steps
+  if (nextStepRows.length) {
+    for (let i = 0; i < nextStepRows.length; i += ABATCH) {
+      const [sql, vals] = bulkInsert('activities',
+        ['"dealId"', 'type', 'notes', '"activityAt"', '"isNextStep"', '"isCompleted"', '"dueAt"', '"createdAt"', '"createdBy"'],
+        nextStepRows.slice(i, i + ABATCH))
+      await run(sql, vals)
+    }
+  }
+
+  // Audit log
+  for (let i = 0; i < auditRows.length; i += ABATCH) {
+    const [sql, vals] = bulkInsert('audit_log',
+      ['"dealId"', 'action', '"newValue"', 'notes', '"performedBy"', '"originatedBy"', '"createdAt"'],
+      auditRows.slice(i, i + ABATCH))
+    await run(sql, vals)
+  }
+
+  // Comments
+  if (commentRows.length) {
+    for (let i = 0; i < commentRows.length; i += ABATCH) {
+      const [sql, vals] = bulkInsert('comments',
+        ['id', '"dealId"', '"authorId"', '"authorName"', 'content', '"mentionedUsers"', '"createdAt"'],
+        commentRows.slice(i, i + ABATCH))
+      await run(sql, vals)
+    }
+  }
+
+  // Deal updates (individual — needs per-deal risk)
+  for (const u of dealUpdates) {
+    await run(`
+      UPDATE deals SET "lastActivityAt"=$1,"lastActivityType"=$2,
+        "riskScore"=$3,"riskFlags"=$4,"riskLevel"=$5,"updatedAt"=$6
+      WHERE "dealId"=$7
+    `, [u.lastAt, u.lastType, u.risk.score, JSON.stringify(u.risk.flags), u.risk.level, now, u.dealId])
+  }
+
+  return {
+    dealsTouched: deals.length,
+    activities:   activityRows.length + nextStepRows.length,
+    comments:     commentRows.length,
+  }
 }
