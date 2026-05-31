@@ -22,8 +22,7 @@ export async function query<T = Record<string, unknown>>(
   params: unknown[] = []
 ): Promise<T[]> {
   const client = getClient()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (client as any)(sql, params) as Promise<T[]>
+  return client.query(sql, params) as Promise<T[]>
 }
 
 /** Executa uma query que retorna no máximo uma linha (ou null). */
@@ -41,8 +40,7 @@ export async function run(
   params: unknown[] = []
 ): Promise<void> {
   const client = getClient()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (client as any)(sql, params)
+  await client.query(sql, params)
 }
 
 /** Executa INSERT/UPDATE com RETURNING e retorna as linhas afetadas. */
