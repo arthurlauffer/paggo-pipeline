@@ -9,14 +9,18 @@ interface PendingAction {
   args: Record<string, unknown>
   title: string
   description: string
+  details?: string
   warnings?: string[]
 }
+
+type ActionResult = { status: 'running' | 'done' | 'error'; summary?: string; error?: string }
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
   pendingActions?: PendingAction[]
-  actionState?: 'pending' | 'confirmed' | 'cancelled'
+  actionState?: 'pending' | 'cancelled'
+  actionResults?: Record<string, ActionResult>
 }
 
 const SUGGESTIONS = [
@@ -157,10 +161,13 @@ export function AgentChat({ isOpen, onClose, onDataChanged, initialMessage, onIn
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [approving, setApproving] = useState(false)
   const [pendingSend, setPendingSend] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<Message[]>([])
 
   useEffect(() => {
+    messagesRef.current = messages
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
@@ -218,35 +225,54 @@ export function AgentChat({ isOpen, onClose, onDataChanged, initialMessage, onIn
     }
   }
 
-  // User confirmed the proposed write actions → commit them server-side.
-  async function confirmActions(msgIndex: number, actions: PendingAction[]) {
-    if (loading) return
-    setLoading(true)
-    setMessages(prev => prev.map((m, i) => i === msgIndex ? { ...m, actionState: 'confirmed' } : m))
+  function setActionResult(msgIndex: number, actionId: string, result: ActionResult) {
+    setMessages(prev => prev.map((m, i) =>
+      i === msgIndex ? { ...m, actionResults: { ...(m.actionResults ?? {}), [actionId]: result } } : m
+    ))
+  }
 
+  // Commits ONE action server-side; updates that card's status. Returns success.
+  async function runAction(msgIndex: number, action: PendingAction): Promise<boolean> {
+    setActionResult(msgIndex, action.id, { status: 'running' })
     try {
       const res = await fetch('/api/agent/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actions: actions.map(a => ({ id: a.id, name: a.name, args: a.args })) }),
+        body: JSON.stringify({ actions: [{ id: action.id, name: action.name, args: action.args }] }),
       })
       const data = await res.json()
-
-      if (data.error) {
-        setMessages(prev => [...prev, { role: 'assistant', content: `❌ Erro ao executar: ${data.error}` }])
-      } else {
-        const lines: string[] = (data.results || []).map((r: { success: boolean; summary?: string; error?: string }) =>
-          r.success ? `✅ ${r.summary || 'Concluído'}` : `❌ ${r.error || 'Falhou'}`
-        )
-        const header = `**${data.succeeded}/${data.total} ação(ões) executada(s)**${data.failed ? ` · ${data.failed} falhou(aram)` : ''}`
-        setMessages(prev => [...prev, { role: 'assistant', content: `${header}\n${lines.join('\n')}` }])
-        if (data.succeeded > 0) onDataChanged()
+      const r = data?.results?.[0]
+      if (r?.success) {
+        setActionResult(msgIndex, action.id, { status: 'done', summary: r.summary })
+        onDataChanged()
+        return true
       }
+      setActionResult(msgIndex, action.id, { status: 'error', error: r?.error || data?.error || 'Falhou' })
+      return false
     } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Erro ao conectar para executar as ações.' }])
-    } finally {
-      setLoading(false)
+      setActionResult(msgIndex, action.id, { status: 'error', error: 'Erro de conexão' })
+      return false
     }
+  }
+
+  // Approve a single email/action.
+  async function approveOne(msgIndex: number, action: PendingAction) {
+    if (approving) return
+    setApproving(true)
+    await runAction(msgIndex, action)
+    setApproving(false)
+  }
+
+  // Approve all not-yet-done actions, sequentially, so progress shows card by card.
+  async function approveAll(msgIndex: number, actions: PendingAction[]) {
+    if (approving) return
+    setApproving(true)
+    for (const action of actions) {
+      const current = messagesRef.current[msgIndex]?.actionResults?.[action.id]?.status
+      if (current === 'done') continue
+      await runAction(msgIndex, action)
+    }
+    setApproving(false)
   }
 
   function cancelActions(msgIndex: number) {
@@ -310,64 +336,109 @@ export function AgentChat({ isOpen, onClose, onDataChanged, initialMessage, onIn
                   : m.content
                 }
 
-                {m.role === 'assistant' && m.pendingActions && m.pendingActions.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    <div className="text-[11px] font-semibold text-amber-300/90 uppercase tracking-wide flex items-center gap-1.5">
-                      <AlertTriangle size={12} />
-                      {m.pendingActions.length} ação(ões) aguardando confirmação
-                    </div>
+                {m.role === 'assistant' && m.pendingActions && m.pendingActions.length > 0 && (() => {
+                  const results   = m.actionResults ?? {}
+                  const doneCount  = m.pendingActions.filter(a => results[a.id]?.status === 'done').length
+                  const total      = m.pendingActions.length
+                  const allDone    = doneCount === total
+                  const cancelled  = m.actionState === 'cancelled'
 
-                    <div className="space-y-1.5">
-                      {m.pendingActions.map((a, ai) => (
-                        <div key={a.id} className="glass-input rounded-xl px-3 py-2 border border-white/[0.06]">
-                          <div className="flex items-start gap-2">
-                            <span className="text-[10px] text-slate-500 mt-0.5 min-w-[16px]">{ai + 1}.</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-semibold text-slate-100">{a.title}</div>
-                              <div className="text-[11px] text-slate-400 leading-relaxed">{a.description}</div>
-                              {a.warnings && a.warnings.length > 0 && (
-                                <div className="mt-1 text-[10px] text-amber-400/90 flex items-start gap-1">
-                                  <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" />
-                                  <span>{a.warnings.join(' · ')}</span>
+                  return (
+                    <div className="mt-3 space-y-2">
+                      <div className="text-[11px] font-semibold text-amber-300/90 uppercase tracking-wide flex items-center gap-1.5">
+                        <AlertTriangle size={12} />
+                        {allDone
+                          ? `${total} ação(ões) concluída(s)`
+                          : `${total} ação(ões) para aprovar${doneCount ? ` · ${doneCount}/${total} prontas` : ''}`}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        {m.pendingActions.map((a, ai) => {
+                          const r = results[a.id]
+                          return (
+                            <div key={a.id} className="glass-input rounded-xl px-3 py-2 border border-white/[0.06]">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[10px] text-slate-500 mt-0.5 min-w-[16px]">{ai + 1}.</span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-xs font-semibold text-slate-100 flex items-center gap-1.5">
+                                    {a.title}
+                                    {r?.status === 'done' && <CheckCircle2 size={12} className="text-emerald-400 flex-shrink-0" />}
+                                    {r?.status === 'error' && <XCircle size={12} className="text-rose-400 flex-shrink-0" />}
+                                    {r?.status === 'running' && <Loader2 size={12} className="text-indigo-400 animate-spin flex-shrink-0" />}
+                                  </div>
+                                  <div className="text-[11px] text-slate-400 leading-relaxed">{a.description}</div>
+
+                                  {a.details && (
+                                    <pre className="mt-1.5 whitespace-pre-wrap font-sans text-[11px] text-slate-300 leading-relaxed bg-black/20 rounded-lg px-2.5 py-2 border border-white/[0.05]">
+                                      {a.details}
+                                    </pre>
+                                  )}
+
+                                  {a.warnings && a.warnings.length > 0 && (
+                                    <div className="mt-1 text-[10px] text-amber-400/90 flex items-start gap-1">
+                                      <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" />
+                                      <span>{a.warnings.join(' · ')}</span>
+                                    </div>
+                                  )}
+
+                                  {r?.status === 'done' && (
+                                    <div className="mt-1 text-[10px] text-emerald-400">✓ {r.summary || 'Concluído'}</div>
+                                  )}
+                                  {r?.status === 'error' && (
+                                    <div className="mt-1 text-[10px] text-rose-400">✕ {r.error}</div>
+                                  )}
+
+                                  {/* Per-card approve (email by email) */}
+                                  {!cancelled && r?.status !== 'done' && (
+                                    <button
+                                      onClick={() => approveOne(i, a)}
+                                      disabled={approving}
+                                      className="mt-2 flex items-center gap-1.5 text-[11px] font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg px-2.5 py-1 transition-colors"
+                                    >
+                                      <Check size={11} /> {r?.status === 'error' ? 'Tentar de novo' : 'Aprovar'}
+                                    </button>
+                                  )}
                                 </div>
-                              )}
+                              </div>
                             </div>
-                          </div>
+                          )
+                        })}
+                      </div>
+
+                      {!cancelled && !allDone && (
+                        <div className="flex gap-2 pt-0.5">
+                          <button
+                            onClick={() => approveAll(i, m.pendingActions!)}
+                            disabled={approving}
+                            className="flex items-center gap-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 transition-colors"
+                          >
+                            {approving
+                              ? <><Loader2 size={13} className="animate-spin" /> Executando {doneCount}/{total}…</>
+                              : <><Check size={13} /> Aprovar todos</>}
+                          </button>
+                          <button
+                            onClick={() => cancelActions(i)}
+                            disabled={approving}
+                            className="flex items-center gap-1.5 text-xs font-medium glass-input hover:bg-white/[0.07] disabled:opacity-50 text-slate-300 rounded-lg px-3 py-1.5 transition-colors"
+                          >
+                            <X size={13} /> Cancelar
+                          </button>
                         </div>
-                      ))}
+                      )}
+
+                      {allDone && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 pt-0.5">
+                          <CheckCircle2 size={12} /> Todas as ações concluídas
+                        </div>
+                      )}
+                      {cancelled && !allDone && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 pt-0.5">
+                          <XCircle size={12} /> Ações canceladas
+                        </div>
+                      )}
                     </div>
-
-                    {(!m.actionState || m.actionState === 'pending') && (
-                      <div className="flex gap-2 pt-0.5">
-                        <button
-                          onClick={() => confirmActions(i, m.pendingActions!)}
-                          disabled={loading}
-                          className="flex items-center gap-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 transition-colors"
-                        >
-                          <Check size={13} /> Confirmar e executar
-                        </button>
-                        <button
-                          onClick={() => cancelActions(i)}
-                          disabled={loading}
-                          className="flex items-center gap-1.5 text-xs font-medium glass-input hover:bg-white/[0.07] disabled:opacity-50 text-slate-300 rounded-lg px-3 py-1.5 transition-colors"
-                        >
-                          <X size={13} /> Cancelar
-                        </button>
-                      </div>
-                    )}
-
-                    {m.actionState === 'confirmed' && (
-                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 pt-0.5">
-                        <CheckCircle2 size={12} /> Ações confirmadas
-                      </div>
-                    )}
-                    {m.actionState === 'cancelled' && (
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-500 pt-0.5">
-                        <XCircle size={12} /> Ações canceladas
-                      </div>
-                    )}
-                  </div>
-                )}
+                  )
+                })()}
               </div>
               {m.role === 'user' && (
                 <div className="w-6 h-6 bg-slate-700 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">

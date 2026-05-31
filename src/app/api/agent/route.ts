@@ -46,6 +46,7 @@ type PendingAction = {
   args: Record<string, unknown>
   title: string
   description: string
+  details?: string
   warnings?: string[]
 }
 
@@ -120,7 +121,8 @@ export async function POST(req: NextRequest) {
           const id = `act-${pendingActions.length + 1}-${Math.random().toString(36).slice(2, 6)}`
           pendingActions.push({
             id, name, args: typedArgs,
-            title: preview.title, description: preview.description, warnings: preview.warnings,
+            title: preview.title, description: preview.description,
+            details: preview.details, warnings: preview.warnings,
           })
 
           return {
@@ -129,8 +131,8 @@ export async function POST(req: NextRequest) {
               response: {
                 status: 'preview',
                 willCommit: false,
-                note: 'Ação PROPOSTA, ainda NÃO executada. Aguardando o usuário clicar em "Confirmar e executar". NÃO diga que já foi feita.',
-                preview: { title: preview.title, description: preview.description, warnings: preview.warnings ?? [] },
+                note: 'Ação PROPOSTA, ainda NÃO executada. O usuário vai aprovar nos cartões (um a um ou todos). NÃO diga que já foi feita/enviada.',
+                preview: { title: preview.title, description: preview.description, details: preview.details, warnings: preview.warnings ?? [] },
               },
             },
           } as Part

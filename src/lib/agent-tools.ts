@@ -24,13 +24,13 @@ Sempre baseie qualquer afirmação em dados retornados por essas ferramentas.
 
 COMO VOCÊ DEVE TRABALHAR (planejar → propor → confirmar → reportar):
 1. PLANEJE: para pedidos com várias etapas, primeiro use as ferramentas de LEITURA para descobrir exatamente quais deals/contas/valores estão envolvidos.
-2. PROPONHA: descreva o plano completo em texto — liste TODOS os deals afetados (id, conta, valor) e o que será feito em cada um. Em seguida chame as ferramentas de ESCRITA correspondentes.
-3. As ferramentas de escrita NÃO executam imediatamente. Elas retornam um PREVIEW e ficam PENDENTES. O usuário verá um cartão com os botões "Confirmar e executar" / "Cancelar".
-4. Portanto NUNCA diga que algo "foi feito", "executado", "registrado" ou "agendado". Diga que você está PROPONDO e que aguarda a confirmação do usuário.
-5. Para ações em LOTE (vários deals), chame a ferramenta de escrita UMA VEZ POR DEAL, para que cada item apareça na lista de preview.
-6. O relatório do que de fato foi feito acontece DEPOIS que o usuário confirma — não antecipe.
+2. PROPONHA: as ferramentas de escrita NÃO executam nada — elas apenas geram CARTÕES DE PREVIEW que o usuário aprova depois. Logo, assim que você tiver o plano, CHAME AS FERRAMENTAS DE ESCRITA IMEDIATAMENTE. Não espere o usuário dizer "sim/confirma" para chamá-las: a aprovação acontece clicando nos cartões, não no texto.
+3. REGRA CRÍTICA: NUNCA termine sua resposta apenas dizendo "vou propor" / "aguarde a confirmação" / "estou propondo" SEM ter chamado as ferramentas de escrita na mesma resposta. Se há ações a propor, CHAME as ferramentas agora. Texto sozinho não gera cartões e não faz nada.
+4. Como as ferramentas só geram preview, NUNCA diga que algo "foi feito", "executado", "registrado", "enviado" ou "agendado". O que de fato foi feito é reportado DEPOIS que o usuário aprovar os cartões.
+5. Para ações em LOTE (vários deals), chame a ferramenta de escrita UMA VEZ POR DEAL, para que cada item vire um cartão separado que o usuário pode aprovar individualmente. Você pode emitir várias chamadas de uma vez.
+6. Depois de chamar as ferramentas, escreva um resumo curto: "Propus N ações — revise e aprove os cartões abaixo (um por um ou todos de uma vez)."
 
-FERRAMENTAS DE ESCRITA (sempre exigem confirmação explícita do usuário): update_stage, log_activity, schedule_next_step, reassign_owner, close_deal, create_reminder, queue_for_review, add_meeting_note.
+FERRAMENTAS DE ESCRITA (só geram preview; o usuário aprova nos cartões): draft_followup_email, update_stage, log_activity, schedule_next_step, reassign_owner, close_deal, create_reminder, queue_for_review, add_meeting_note.
 
 REGRAS DE SEGURANÇA (inquebráveis):
 - NUNCA invente IDs de deal, nomes de conta, valores, nomes de owner ou nomes de contato. Use somente o que as leituras retornarem.
@@ -39,9 +39,11 @@ REGRAS DE SEGURANÇA (inquebráveis):
 - Ao fechar como CLOSED_LOST, sempre informe qual lostReason será registrado.
 - Transições de estágio inválidas serão rejeitadas; respeite o funil.
 
-PARA EMAILS DE FOLLOW-UP:
-- Use draft_email para o contexto, componha um email profissional em português adaptado ao estágio do ciclo, com Assunto: e Corpo:, usando dados reais (conta, estágio, valor, histórico).
-- Para de fato registrar o envio planejado, proponha schedule_next_step (tipo EMAIL) e/ou queue_for_review.
+PARA EMAILS DE FOLLOW-UP (fluxo preferido):
+- Se precisar de histórico detalhado, use draft_email (leitura) para o contexto; caso já tenha os dados do search_deals, pode compor direto.
+- Componha um email profissional em português adaptado ao estágio do ciclo, com assunto e corpo, usando dados reais (conta, estágio, valor, histórico). Saudação neutra (ex.: "Olá, equipe da [Conta]") — não invente nome de contato.
+- Em seguida CHAME draft_followup_email (uma vez por deal) passando dealId, subject e body já compostos. Cada chamada vira um cartão com o email completo, que o usuário lê e aprova individualmente. Ao aprovar, o email é agendado (atividade EMAIL) e enfileirado para o owner revisar e enviar.
+- NÃO use schedule_next_step + queue_for_review separadamente para emails: draft_followup_email já faz as duas coisas num único cartão revisável.
 
 Responda sempre em português brasileiro. Seja direto e profissional.`
 
@@ -125,6 +127,20 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
     },
   },
   // ─── Write tools (proposed → require explicit confirmation) ───
+  {
+    name: 'draft_followup_email',
+    description: 'PROPÕE um email de follow-up: VOCÊ compõe o assunto e o corpo, e gera um cartão com o email COMPLETO para o usuário ler e aprovar email por email. Ao aprovar, o email é agendado como atividade EMAIL e enfileirado para o owner revisar e enviar ao cliente. Não executa sozinho — só gera preview.',
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        dealId:  { type: SchemaType.STRING, description: 'ID do deal' },
+        subject: { type: SchemaType.STRING, description: 'Assunto do email' },
+        body:    { type: SchemaType.STRING, description: 'Corpo completo do email em português, adaptado ao estágio. Saudação neutra — não invente nome de contato.' },
+        sendAt:  { type: SchemaType.STRING, description: 'Timestamp ISO de quando enviar (padrão: amanhã de manhã)' },
+      },
+      required: ['dealId', 'subject', 'body'],
+    },
+  },
   {
     name: 'update_stage',
     description: 'PROPÕE mover um deal para um novo estágio (valida a transição). Não executa: gera preview e aguarda confirmação.',
@@ -236,8 +252,8 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
 ]
 
 export const WRITE_TOOLS = new Set([
-  'update_stage', 'log_activity', 'schedule_next_step', 'reassign_owner',
-  'close_deal', 'queue_for_review', 'create_reminder', 'add_meeting_note',
+  'draft_followup_email', 'update_stage', 'log_activity', 'schedule_next_step',
+  'reassign_owner', 'close_deal', 'queue_for_review', 'create_reminder', 'add_meeting_note',
 ])
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -407,11 +423,24 @@ export type PreviewResult = {
   ok: boolean
   title: string          // short label for the action card
   description: string    // human-readable preview of the change
+  details?: string       // long-form content (e.g. full email subject+body)
   warnings?: string[]
   error?: string
 }
 
 export async function previewWrite(name: string, args: Record<string, unknown>): Promise<PreviewResult> {
+  if (name === 'draft_followup_email') {
+    const deal = await queryOne(`SELECT "accountName","ownerName" FROM deals WHERE "dealId" = $1`, [args.dealId as string]) as any
+    if (!deal) return { ok: false, title: 'Email de follow-up', description: '', error: `Deal ${args.dealId} não encontrado` }
+    const at = (args.sendAt as string) || tomorrowMorningISO()
+    return {
+      ok: true,
+      title: `Email follow-up · ${deal.accountName}`,
+      description: `Agendar envio para ${fmtDate(at)} e enfileirar para ${deal.ownerName} revisar e enviar`,
+      details: `Assunto: ${args.subject ?? ''}\n\n${args.body ?? ''}`,
+    }
+  }
+
   if (name === 'update_stage') {
     const deal = await queryOne(`SELECT "accountName",stage,amount FROM deals WHERE "dealId" = $1`, [args.dealId as string]) as any
     if (!deal) return { ok: false, title: 'Mover estágio', description: '', error: `Deal ${args.dealId} não encontrado` }
@@ -477,6 +506,28 @@ export type CommitResult = { success: boolean; summary?: string; error?: string 
 
 export async function commitWrite(name: string, args: Record<string, unknown>): Promise<CommitResult> {
   const now = new Date().toISOString()
+
+  if (name === 'draft_followup_email') {
+    const deal = await queryOne(`SELECT "accountName","ownerName" FROM deals WHERE "dealId" = $1`, [args.dealId as string]) as any
+    if (!deal) return { success: false, error: `Deal ${args.dealId} não encontrado` }
+    const at       = (args.sendAt as string) || tomorrowMorningISO()
+    const fullMail = `Assunto: ${args.subject ?? ''}\n\n${args.body ?? ''}`
+    // 1. Schedule the email as a pending next step (EMAIL) due at sendAt.
+    await run(`INSERT INTO activities ("dealId",type,notes,"activityAt","isNextStep","isCompleted","dueAt","createdAt","createdBy") VALUES ($1,'EMAIL',$2,$3,1,0,$3,$4,'agent')`,
+      [args.dealId, fullMail, at, now])
+    // 2. Queue for owner review as a comment on the deal.
+    const cid = `CMT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    await run(`INSERT INTO comments (id,"dealId","authorId","authorName",content,"mentionedUsers","createdAt") VALUES ($1,$2,'agent','Paggo CRM (agente)',$3,'[]',$4)`,
+      [cid, args.dealId, `🔖 Email de follow-up para revisão de ${deal.ownerName} (envio sugerido ${fmtDate(at)}):\n\n${fullMail}`, now])
+    // 3. Reminder for the owner to review & send.
+    const rid = `REM-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    await run(`INSERT INTO reminders (id,"dealId","dealName",message,"triggerAt","createdBy","isDismissed","createdAt") VALUES ($1,$2,$3,$4,$5,'agent',0,$6)`,
+      [rid, args.dealId, deal.accountName, `Revisar e enviar email de follow-up — ${deal.accountName}`, at, now])
+    // 4. Audit (agent-originated).
+    await run(`INSERT INTO audit_log ("dealId",action,"newValue",notes,"performedBy","originatedBy","createdAt") VALUES ($1,'EMAIL_DRAFTED',$2,$3,'manager','agent',$4)`,
+      [args.dealId, (args.subject as string) || '', fullMail, now])
+    return { success: true, summary: `${deal.accountName}: email agendado p/ ${fmtDate(at)} e enfileirado para ${deal.ownerName}` }
+  }
 
   if (name === 'update_stage') {
     const deal = await queryOne(`SELECT * FROM deals WHERE "dealId" = $1`, [args.dealId as string]) as any
