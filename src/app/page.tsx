@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { MessageSquare, RefreshCw, Database } from 'lucide-react'
+import { MessageSquare, RefreshCw, Database, LogOut } from 'lucide-react'
+import { LoginGate }      from '@/components/LoginGate'
 import { KPICards }       from '@/components/KPICards'
 import { Filters }        from '@/components/Filters'
 import { DealTable }      from '@/components/DealTable'
@@ -22,7 +23,34 @@ const KANBAN_FILTERS:  DealFilters = { sortBy: 'riskScore', sortOrder: 'desc', l
 type View      = 'home' | 'notifications' | 'pipeline' | 'kanban' | 'charts' | 'playbooks'
 type DetailTab = 'info' | 'activity' | 'comments'
 
+type Me = { email: string | null; displayName: string | null }
+
 export default function HomePage() {
+  // ── Auth gate ───────────────────────────────────────────────────────────
+  // null = still checking, false = not logged in (show gate), true = logged in
+  const [authed, setAuthed] = useState<boolean | null>(null)
+  const [me,     setMe]     = useState<Me | null>(null)
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then((d: { authed: boolean; email?: string | null; displayName?: string | null }) => {
+        if (cancelled) return
+        setAuthed(!!d.authed)
+        if (d.authed) setMe({ email: d.email ?? null, displayName: d.displayName ?? null })
+      })
+      .catch(() => { if (!cancelled) setAuthed(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleLogout = async () => {
+    setLoggingOut(true)
+    try { await fetch('/api/auth/logout', { method: 'POST' }) } catch { /* ignore */ }
+    window.location.href = '/'
+  }
+
   const [view,           setView]           = useState<View>('home')
   const [sidebarOpen,    setSidebarOpen]    = useState(false)
   const [deals,          setDeals]          = useState<Deal[]>([])
@@ -87,7 +115,7 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => { checkSeeded() }, [checkSeeded])
+  useEffect(() => { if (authed) checkSeeded() }, [authed, checkSeeded])
 
   useEffect(() => {
     if (dbEmpty) return
@@ -151,6 +179,20 @@ export default function HomePage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  // Still checking the session → minimal loading screen (avoids gate flash).
+  if (authed === null) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <RefreshCw size={20} className="text-slate-500 animate-spin" />
+      </div>
+    )
+  }
+
+  // Not logged in → show the Google connect gate before the app.
+  if (!authed) {
+    return <LoginGate />
+  }
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
 
@@ -180,6 +222,23 @@ export default function HomePage() {
             <MessageSquare size={13} />
             Ask Paggo CRM
           </button>
+
+          {/* Logged-in user + logout */}
+          <div className="flex items-center gap-2 ml-1.5 pl-2.5 border-l border-white/[0.07]">
+            {(me?.displayName || me?.email) && (
+              <span className="text-xs text-slate-400 max-w-[160px] truncate" title={me?.email ?? undefined}>
+                {me?.displayName || me?.email}
+              </span>
+            )}
+            <button
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+              title="Sair"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
         </div>
       </header>
 
