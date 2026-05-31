@@ -11,7 +11,11 @@ function getClient() {
         'DATABASE_URL não encontrada. Configure-a no painel da Neon/Supabase e adicione ao .env.local (dev) ou Vercel (prod).'
       )
     }
-    _sql = neon(url)
+    // `cache: 'no-store'` is critical: the neon serverless driver issues queries
+    // over fetch(), and Next.js/Vercel otherwise persists those responses in its
+    // Data Cache (across deploys). That caused reads like the Google Calendar
+    // credential lookup to return stale/empty results forever after first call.
+    _sql = neon(url, { fetchOptions: { cache: 'no-store' } })
   }
   return _sql
 }
