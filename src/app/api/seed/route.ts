@@ -41,7 +41,8 @@ export async function POST() {
   // Fallback: fetch from public/ (works on Vercel)
   if (!csvContent) {
     try {
-      const base = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+      const base = process.env.NEXT_PUBLIC_BASE_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
       const res  = await fetch(`${base}/data/deals.csv`)
       if (res.ok) csvContent = await res.text()
     } catch { /* ignore */ }
