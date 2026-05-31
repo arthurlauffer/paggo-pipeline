@@ -1,11 +1,22 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { X, Send, Bot, User, Loader2 } from 'lucide-react'
+import { X, Send, Bot, User, Loader2, AlertTriangle, Check, CheckCircle2, XCircle } from 'lucide-react'
+
+interface PendingAction {
+  id: string
+  name: string
+  args: Record<string, unknown>
+  title: string
+  description: string
+  warnings?: string[]
+}
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  pendingActions?: PendingAction[]
+  actionState?: 'pending' | 'confirmed' | 'cancelled'
 }
 
 const SUGGESTIONS = [
@@ -192,16 +203,54 @@ export function AgentChat({ isOpen, onClose, onDataChanged, initialMessage, onIn
       if (data.error) {
         setMessages(prev => [...prev, { role: 'assistant', content: `❌ Erro: ${data.error}` }])
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: data.content }])
-        if (data.content.includes('✅') || data.content.includes('executado') || data.content.includes('registrado') || data.content.includes('agendado')) {
-          onDataChanged()
-        }
+        const hasPending = Array.isArray(data.pendingActions) && data.pendingActions.length > 0
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: data.content,
+          pendingActions: hasPending ? data.pendingActions : undefined,
+          actionState: hasPending ? 'pending' : undefined,
+        }])
       }
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: '❌ Erro ao conectar com o agente. Verifique a GOOGLE_AI_API_KEY no .env.local.' }])
     } finally {
       setLoading(false)
     }
+  }
+
+  // User confirmed the proposed write actions → commit them server-side.
+  async function confirmActions(msgIndex: number, actions: PendingAction[]) {
+    if (loading) return
+    setLoading(true)
+    setMessages(prev => prev.map((m, i) => i === msgIndex ? { ...m, actionState: 'confirmed' } : m))
+
+    try {
+      const res = await fetch('/api/agent/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actions: actions.map(a => ({ id: a.id, name: a.name, args: a.args })) }),
+      })
+      const data = await res.json()
+
+      if (data.error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: `❌ Erro ao executar: ${data.error}` }])
+      } else {
+        const lines: string[] = (data.results || []).map((r: { success: boolean; summary?: string; error?: string }) =>
+          r.success ? `✅ ${r.summary || 'Concluído'}` : `❌ ${r.error || 'Falhou'}`
+        )
+        const header = `**${data.succeeded}/${data.total} ação(ões) executada(s)**${data.failed ? ` · ${data.failed} falhou(aram)` : ''}`
+        setMessages(prev => [...prev, { role: 'assistant', content: `${header}\n${lines.join('\n')}` }])
+        if (data.succeeded > 0) onDataChanged()
+      }
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Erro ao conectar para executar as ações.' }])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function cancelActions(msgIndex: number) {
+    setMessages(prev => prev.map((m, i) => i === msgIndex ? { ...m, actionState: 'cancelled' } : m))
   }
 
   if (!isOpen) return null
@@ -260,6 +309,65 @@ export function AgentChat({ isOpen, onClose, onDataChanged, initialMessage, onIn
                   ? <MarkdownMessage content={m.content} />
                   : m.content
                 }
+
+                {m.role === 'assistant' && m.pendingActions && m.pendingActions.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <div className="text-[11px] font-semibold text-amber-300/90 uppercase tracking-wide flex items-center gap-1.5">
+                      <AlertTriangle size={12} />
+                      {m.pendingActions.length} ação(ões) aguardando confirmação
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {m.pendingActions.map((a, ai) => (
+                        <div key={a.id} className="glass-input rounded-xl px-3 py-2 border border-white/[0.06]">
+                          <div className="flex items-start gap-2">
+                            <span className="text-[10px] text-slate-500 mt-0.5 min-w-[16px]">{ai + 1}.</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-semibold text-slate-100">{a.title}</div>
+                              <div className="text-[11px] text-slate-400 leading-relaxed">{a.description}</div>
+                              {a.warnings && a.warnings.length > 0 && (
+                                <div className="mt-1 text-[10px] text-amber-400/90 flex items-start gap-1">
+                                  <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" />
+                                  <span>{a.warnings.join(' · ')}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {(!m.actionState || m.actionState === 'pending') && (
+                      <div className="flex gap-2 pt-0.5">
+                        <button
+                          onClick={() => confirmActions(i, m.pendingActions!)}
+                          disabled={loading}
+                          className="flex items-center gap-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 transition-colors"
+                        >
+                          <Check size={13} /> Confirmar e executar
+                        </button>
+                        <button
+                          onClick={() => cancelActions(i)}
+                          disabled={loading}
+                          className="flex items-center gap-1.5 text-xs font-medium glass-input hover:bg-white/[0.07] disabled:opacity-50 text-slate-300 rounded-lg px-3 py-1.5 transition-colors"
+                        >
+                          <X size={13} /> Cancelar
+                        </button>
+                      </div>
+                    )}
+
+                    {m.actionState === 'confirmed' && (
+                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 pt-0.5">
+                        <CheckCircle2 size={12} /> Ações confirmadas
+                      </div>
+                    )}
+                    {m.actionState === 'cancelled' && (
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-500 pt-0.5">
+                        <XCircle size={12} /> Ações canceladas
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               {m.role === 'user' && (
                 <div className="w-6 h-6 bg-slate-700 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
