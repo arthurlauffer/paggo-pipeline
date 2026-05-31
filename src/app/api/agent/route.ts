@@ -6,6 +6,38 @@ import {
 } from '@/lib/agent-tools'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60 // allow time for retry/backoff on rate limits
+
+// gemini-2.5-flash-lite has the most generous free-tier limits (≈15 RPM / 1000 RPD)
+// while still supporting function calling. Override with GEMINI_MODEL if desired.
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite'
+
+// Detects a Gemini rate-limit / quota error.
+function isRateLimit(err: unknown): boolean {
+  const m = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return m.includes('429') || m.includes('resource_exhausted') || m.includes('quota') || m.includes('rate limit')
+}
+
+// Sends a message, retrying on 429 with the delay Google suggests (or exponential backoff).
+async function sendWithRetry(
+  chat: { sendMessage: (p: string | Part[]) => Promise<{ response: import('@google/generative-ai').EnhancedGenerateContentResponse }> },
+  parts: string | Part[],
+  maxRetries = 3,
+) {
+  let attempt = 0
+  for (;;) {
+    try {
+      return await chat.sendMessage(parts)
+    } catch (err) {
+      if (!isRateLimit(err) || attempt >= maxRetries) throw err
+      const msg   = err instanceof Error ? err.message : String(err)
+      const match = msg.match(/retryDelay"?:\s*"?(\d+)/i)
+      const waitSec = match ? parseInt(match[1], 10) : Math.min(2 ** attempt * 2, 12)
+      await new Promise(r => setTimeout(r, (waitSec + 0.5) * 1000))
+      attempt++
+    }
+  }
+}
 
 // A write action the agent proposed during this turn, awaiting user confirmation.
 type PendingAction = {
@@ -31,7 +63,7 @@ export async function POST(req: NextRequest) {
   try {
     const genAI = new GoogleGenerativeAI(apiKey)
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: MODEL,
       systemInstruction: SYSTEM_PROMPT,
       tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
       generationConfig: { temperature: 0.7, maxOutputTokens: 4096 },
@@ -49,7 +81,7 @@ export async function POST(req: NextRequest) {
     const pendingActions: PendingAction[] = []
 
     for (let i = 0; i < 10; i++) {
-      const result   = await chat.sendMessage(currentParts)
+      const result   = await sendWithRetry(chat, currentParts)
       const response = result.response
       const parts    = response.candidates?.[0]?.content?.parts ?? []
       const fnCalls  = parts.filter((p: Part) => !!p.functionCall)
