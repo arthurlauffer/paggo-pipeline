@@ -13,10 +13,12 @@ export async function GET() {
     out.dbHost = url.replace(/^.*@/, '').replace(/\/.*$/, '') || '(unset)'
   } catch (e: any) { out.dbHostError = String(e?.message ?? e) }
 
-  // A) Broad read (no WHERE)
+  // A) Broad read (no WHERE) — inspect raw bytes of the id column
   try {
     const rows = await query(
-      `SELECT id, (refresh_token IS NOT NULL) AS has_refresh FROM google_credentials`
+      `SELECT id, length(id) AS len, (id = 'default') AS eq_default,
+              encode(convert_to(id, 'UTF8'), 'hex') AS id_hex
+       FROM google_credentials`
     )
     out.broad = { rowCount: rows.length, rows }
   } catch (e: any) { out.broadError = String(e?.message ?? e) }
