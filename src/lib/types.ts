@@ -73,11 +73,13 @@ export interface AuditEvent {
 }
 
 export interface DealFilters {
-  stage?: Stage
+  // stage / ownerName / accountSegment / riskLevel hold one OR many values,
+  // comma-joined (e.g. "LEAD,DEMO") to support multi-select filtering.
+  stage?: string
   ownerName?: string
-  accountSegment?: Segment
+  accountSegment?: string
   industry?: string
-  riskLevel?: RiskLevel
+  riskLevel?: string
   search?: string
   sortBy?: string
   sortOrder?: 'asc' | 'desc'

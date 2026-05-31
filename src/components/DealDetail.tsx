@@ -482,6 +482,7 @@ function CommentsTab({ dealId }: { dealId: string }) {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [members, setMembers]         = useState<MentionMember[]>([])
   const [teams, setTeams]             = useState<MentionTeam[]>([])
+  const [me, setMe]                   = useState<{ id: string; name: string } | null>(null)
   const textareaRef                   = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -501,6 +502,12 @@ function CommentsTab({ dealId }: { dealId: string }) {
       .then(r => r.json())
       .then(d => setTeams((d.teams || []) as MentionTeam[]))
       .catch(() => setTeams([]))
+    // Identify the logged-in user so their comments are attributed to them
+    // (and so they don't appear in their own @mention list).
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then(d => { if (d?.authed && d.memberId) setMe({ id: d.memberId, name: d.memberName || d.displayName || 'Você' }) })
+      .catch(() => {})
   }, [])
 
   // Mentionable entities: colleagues (excluding yourself) + teams.
@@ -510,7 +517,7 @@ function CommentsTab({ dealId }: { dealId: string }) {
 
   const mentionables: Mentionable[] = [
     ...members
-      .filter(m => m.id !== 'user-0')
+      .filter(m => m.id !== 'user-0' && m.id !== me?.id)
       .map(m => ({ kind: 'member' as const, id: m.id, name: m.name, initials: m.initials, color: m.color, sub: m.role || 'Membro' })),
     ...teams.map(t => ({
       kind: 'team' as const, id: t.id, name: t.name, color: t.color,
@@ -570,6 +577,7 @@ function CommentsTab({ dealId }: { dealId: string }) {
       body: JSON.stringify({
         content: text.trim(),
         mentionedUsers: extractMentioned(text),
+        ...(me ? { authorId: me.id, authorName: me.name } : {}),
       }),
     })
     const data = await res.json()

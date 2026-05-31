@@ -1,30 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { STAGE_WEIGHTS } from '@/lib/types'
-import type { Stage, Segment, RiskLevel } from '@/lib/types'
+import type { Stage } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
 
-  const stage          = searchParams.get('stage')          as Stage    | null
-  const ownerName      = searchParams.get('ownerName')
-  const accountSegment = searchParams.get('accountSegment') as Segment  | null
+  const splitParam = (v: string | null): string[] =>
+    (v ?? '').split(',').map(s => s.trim()).filter(Boolean)
+
+  const stages         = splitParam(searchParams.get('stage'))
+  const ownerNames     = splitParam(searchParams.get('ownerName'))
+  const segments_f     = splitParam(searchParams.get('accountSegment'))
   const industry       = searchParams.get('industry')
-  const riskLevel      = searchParams.get('riskLevel')      as RiskLevel| null
+  const riskLevels     = splitParam(searchParams.get('riskLevel'))
   const search         = searchParams.get('search')
   const includesClosed = searchParams.get('includesClosed') === 'true'
 
   const conditions: string[] = []
   const values: unknown[] = []
 
+  const inClause = (col: string, list: string[]) => {
+    if (!list.length) return
+    const placeholders = list.map(v => { values.push(v); return `$${values.length}` })
+    conditions.push(`${col} IN (${placeholders.join(', ')})`)
+  }
+
   if (!includesClosed) conditions.push("stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')")
-  if (stage)          { values.push(stage);          conditions.push(`stage = $${values.length}`) }
-  if (ownerName)      { values.push(ownerName);      conditions.push(`"ownerName" = $${values.length}`) }
-  if (accountSegment) { values.push(accountSegment); conditions.push(`"accountSegment" = $${values.length}`) }
+  inClause('stage',            stages)
+  inClause('"ownerName"',      ownerNames)
+  inClause('"accountSegment"', segments_f)
+  inClause('"riskLevel"',      riskLevels)
   if (industry)       { values.push(industry);       conditions.push(`industry = $${values.length}`) }
-  if (riskLevel)      { values.push(riskLevel);      conditions.push(`"riskLevel" = $${values.length}`) }
   if (search) {
     values.push(`%${search}%`)
     const i = values.length

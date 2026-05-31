@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { MessageSquare, Plus } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { MessageSquare, Plus, SlidersHorizontal, Eye, EyeOff } from 'lucide-react'
 import { RiskBadge } from './RiskBadge'
 import { NewDealModal } from './NewDealModal'
 import { formatDistanceToNow, parseISO } from 'date-fns'
@@ -51,13 +51,32 @@ export function KanbanView({ deals, selectedId, onSelect, onStageMove, onOpenCom
   const [dragOverStage, setDragOverStage] = useState<Stage | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [showNewDeal, setShowNewDeal] = useState(false)
+  const [hidden, setHidden] = useState<Set<Stage>>(new Set())
+  const [showCols, setShowCols] = useState(false)
+  const colsRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showCols) return
+    const h = (e: MouseEvent) => { if (colsRef.current && !colsRef.current.contains(e.target as Node)) setShowCols(false) }
+    window.addEventListener('mousedown', h)
+    return () => window.removeEventListener('mousedown', h)
+  }, [showCols])
 
   // Show closed-stage columns only when such deals are present in the result set
   // (e.g. when the user filters for "Ganho"/"Perdido" deals).
   const closedPresent = (['CLOSED_WON', 'CLOSED_LOST'] as Stage[]).filter(
     s => deals.some(d => d.stage === s)
   )
-  const displayStages: Stage[] = [...ACTIVE_STAGES, ...closedPresent]
+  const candidateStages: Stage[] = [...ACTIVE_STAGES, ...closedPresent]
+  // Columns the user has chosen to hide are dropped from the board.
+  const displayStages: Stage[] = candidateStages.filter(s => !hidden.has(s))
+
+  const toggleStage = (s: Stage) =>
+    setHidden(prev => {
+      const next = new Set(prev)
+      if (next.has(s)) next.delete(s); else next.add(s)
+      return next
+    })
 
   const grouped = displayStages.reduce<Record<Stage, Deal[]>>((acc, stage) => {
     acc[stage] = deals.filter(d => d.stage === stage)
@@ -105,8 +124,43 @@ export function KanbanView({ deals, selectedId, onSelect, onStageMove, onOpenCom
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Top bar with "Novo Deal" button */}
-      <div className="flex-shrink-0 flex items-center justify-end px-4 pt-2 pb-1">
+      {/* Top bar with column visibility + "Novo Deal" */}
+      <div className="flex-shrink-0 flex items-center justify-end gap-2 px-4 pt-2 pb-1">
+        {/* Column visibility */}
+        <div ref={colsRef} className="relative">
+          <button
+            onClick={() => setShowCols(o => !o)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              hidden.size ? 'text-indigo-300 bg-indigo-500/10' : 'text-slate-300 hover:bg-white/[0.06]'
+            }`}
+            style={{ border: '1px solid rgba(255,255,255,0.1)' }}
+            title="Mostrar/ocultar colunas"
+          >
+            <SlidersHorizontal size={12} />
+            Colunas{hidden.size ? ` (${candidateStages.length - hidden.size}/${candidateStages.length})` : ''}
+          </button>
+
+          {showCols && (
+            <div className="absolute right-0 z-30 mt-1 min-w-[200px] glass-strong rounded-xl p-1.5 shadow-2xl border border-white/[0.08]">
+              <p className="px-2 py-1 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Estágios visíveis</p>
+              {candidateStages.map(s => {
+                const visible = !hidden.has(s)
+                return (
+                  <button
+                    key={s}
+                    onClick={() => toggleStage(s)}
+                    className="flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm text-slate-200 hover:bg-white/[0.07] transition-colors"
+                  >
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: STAGE_COLORS[s] }} />
+                    <span className="flex-1 truncate">{STAGE_LABELS[s]}</span>
+                    {visible ? <Eye size={13} className="text-slate-400" /> : <EyeOff size={13} className="text-slate-600" />}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
         <button
           onClick={() => setShowNewDeal(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-300 hover:text-white hover:bg-indigo-600 transition-all"
