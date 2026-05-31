@@ -3,7 +3,18 @@
 import { Search, X } from 'lucide-react'
 import type { DealFilters, Stage, Segment, RiskLevel } from '@/lib/types'
 
-const STAGES: Stage[] = ['LEAD', 'QUALIFIED', 'DISCOVERY', 'DEMO', 'PROPOSAL', 'NEGOTIATION']
+const STAGES: Stage[] = ['LEAD', 'QUALIFIED', 'DISCOVERY', 'DEMO', 'PROPOSAL', 'NEGOTIATION', 'CLOSED_WON', 'CLOSED_LOST']
+
+const STAGE_LABELS: Record<Stage, string> = {
+  LEAD: 'Lead',
+  QUALIFIED: 'Qualificado',
+  DISCOVERY: 'Discovery',
+  DEMO: 'Demo',
+  PROPOSAL: 'Proposta',
+  NEGOTIATION: 'Negociação',
+  CLOSED_WON: '🏆 Ganho',
+  CLOSED_LOST: '❌ Perdido',
+}
 
 interface Props {
   filters: DealFilters
@@ -50,8 +61,12 @@ export function Filters({ filters, owners, onChange, onReset, showSort = true }:
       <Select
         label="Estágio"
         value={filters.stage || ''}
-        options={STAGES.map(s => ({ label: s, value: s }))}
-        onChange={v => onChange({ stage: (v as Stage) || undefined })}
+        options={STAGES.map(s => ({ label: STAGE_LABELS[s], value: s }))}
+        onChange={v => {
+          const stage = (v as Stage) || undefined
+          const isClosed = stage === 'CLOSED_WON' || stage === 'CLOSED_LOST'
+          onChange({ stage, includesClosed: isClosed || undefined })
+        }}
       />
 
       <Select

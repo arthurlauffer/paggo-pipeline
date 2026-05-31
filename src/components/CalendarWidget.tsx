@@ -566,8 +566,6 @@ export function CalendarWidget() {
 
   useEffect(() => { load() }, [load])
 
-  if (!loading && !process.env.NEXT_PUBLIC_GOOGLE_CONFIGURED && !status?.connected) return null
-
   if (loading) {
     return (
       <div className="glass-md rounded-xl p-5 animate-pulse space-y-3">

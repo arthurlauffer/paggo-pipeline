@@ -52,7 +52,14 @@ export function KanbanView({ deals, selectedId, onSelect, onStageMove, onOpenCom
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [showNewDeal, setShowNewDeal] = useState(false)
 
-  const grouped = ACTIVE_STAGES.reduce<Record<Stage, Deal[]>>((acc, stage) => {
+  // Show closed-stage columns only when such deals are present in the result set
+  // (e.g. when the user filters for "Ganho"/"Perdido" deals).
+  const closedPresent = (['CLOSED_WON', 'CLOSED_LOST'] as Stage[]).filter(
+    s => deals.some(d => d.stage === s)
+  )
+  const displayStages: Stage[] = [...ACTIVE_STAGES, ...closedPresent]
+
+  const grouped = displayStages.reduce<Record<Stage, Deal[]>>((acc, stage) => {
     acc[stage] = deals.filter(d => d.stage === stage)
     return acc
   }, {} as Record<Stage, Deal[]>)
@@ -111,7 +118,7 @@ export function KanbanView({ deals, selectedId, onSelect, onStageMove, onOpenCom
       </div>
 
       <div className="flex-1 flex gap-3 px-4 py-2 overflow-x-auto min-h-0">
-      {ACTIVE_STAGES.map(stage => {
+      {displayStages.map(stage => {
         const stageDeals = grouped[stage] || []
         const stageValue = stageDeals.reduce((s, d) => s + d.amount, 0)
         const highRisk = stageDeals.filter(d => d.riskLevel === 'HIGH').length
