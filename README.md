@@ -1,15 +1,17 @@
 # Paggo Pipeline Intelligence
 
-Ferramenta de *pipeline intelligence* para gerentes de vendas B2B. Importa ~8.000 deals, calcula **risk score automático (0–100)**, oferece **CRUD completo que persiste** (com máquina de estados e audit log) e um **agente de IA** que responde perguntas sobre o pipeline e executa ações em nome do gerente — sempre com preview e confirmação explícita.
+Eu construí uma ferramenta de *pipeline intelligence* para gerentes de vendas B2B. Ela importa cerca de 8.000 deals, calcula um risk score automático de 0 a 100, oferece CRUD completo que persiste no banco (com máquina de estados e audit log) e traz um agente de IA que responde perguntas sobre o pipeline e executa ações em nome do gerente, sempre com preview e confirmação explícita.
 
 🔗 **App publicado:** https://paggo-pipeline.vercel.app
 🔗 **Repositório:** https://github.com/arthurlauffer/paggo-pipeline
 
 ## Stack
 
-- **Next.js 14** (App Router) + TypeScript + Tailwind — deploy na **Vercel**
+Escolhi a stack pensando em rodar tudo de graça e com o mínimo de atrito:
+
+- **Next.js 14** (App Router) com TypeScript e Tailwind, publicado na **Vercel**
 - **Neon** (PostgreSQL serverless) como banco
-- **Google Gemini** (`gemini-2.5-flash-lite`) para o agente, com **loop de function calling próprio** (read tools executam ao vivo; write tools geram preview e só commitam após confirmação)
+- **Google Gemini** (`gemini-2.5-flash-lite`) no agente, com um loop de function calling que escrevi do zero (read tools executam ao vivo, write tools geram preview e só commitam depois da confirmação)
 - **Recharts** para as visualizações
 - **Google Calendar API** (opcional) para a visão de agenda
 
@@ -21,38 +23,38 @@ npm install
 # .env.local
 DATABASE_URL=postgres://...           # connection string do Neon (neon.tech, tier grátis)
 GOOGLE_AI_API_KEY=...                 # chave do Google AI Studio (aistudio.google.com, grátis)
-# Opcional — sobrescreve o modelo padrão:
+# Opcional, sobrescreve o modelo padrão:
 # GEMINI_MODEL=gemini-2.5-flash-lite
-# Opcional — integração com Google Calendar:
+# Opcional, integração com Google Calendar:
 # GOOGLE_CLIENT_ID=...
 # GOOGLE_CLIENT_SECRET=...
 # NEXT_PUBLIC_BASE_URL=http://localhost:3000
 
 npm run dev
-# http://localhost:3000  →  clique em "Inicializar Banco" para importar os deals
+# http://localhost:3000, depois clique em "Inicializar Banco" para importar os deals
 ```
 
-O dataset (`public/data/deals.csv`, ~8.000 linhas) já está no repositório. O endpoint `POST /api/seed` cria as tabelas e importa o CSV (procura em `CSV_PATH`, depois `public/data/deals.csv`).
-
----
+Deixei o dataset (`public/data/deals.csv`, cerca de 8.000 linhas) já dentro do repositório. O endpoint `POST /api/seed` cria as tabelas e importa o CSV (ele procura primeiro em `CSV_PATH` e depois em `public/data/deals.csv`).
 
 ## Regras de Risco
 
-Cada deal recebe um **risk score 0–100** composto por 7 fatores. Score **≥ 70 = Crítico** (vermelho), **40–69 = Em risco** (amarelo), **< 40 = Saudável** (verde). Optei por score composto em vez de flags binárias para permitir **ordenar o pipeline por urgência real**: um deal com 3 flags leves recebe menos atenção que um com 2 flags graves.
+Como o dataset vem sem nenhum rótulo de risco, eu precisei decidir o que "em risco" significa. Em vez de flags binárias, optei por um **risk score de 0 a 100** composto por 7 fatores, porque eu queria conseguir ordenar o pipeline por urgência real. Pra mim isso importa: um deal com 3 sinais leves (score 45) não deveria roubar a atenção de um deal com 2 sinais graves (score 70). A faixa que defini é: score acima de 70 é Crítico (vermelho), de 40 a 69 é Em risco (amarelo), abaixo de 40 é Saudável (verde).
 
-| Regra | Pontos | Raciocínio |
+Esses são os fatores que escolhi e o motivo de cada um:
+
+| Regra | Pontos | Por que eu incluí |
 |---|---|---|
-| **NO_ACTIVITY** — nunca teve atividade | 30 | Deal criado mas nunca tocado = abandono completo. O sinal mais forte de deal morto. |
-| **STALE** — sem atividade em 14+ dias | 20 | Best practice B2B: todo deal ativo deve ser tocado ao menos quinzenalmente. Silêncio de 2 semanas = deal esfriando. |
-| **HIGH_VALUE_COLD** — deal > R$50k parado 7+ dias | +10 | Deals grandes precisam de mais atenção. Um enterprise parado 7 dias é mais grave que um SMB parado 7 dias. |
-| **OVERDUE** — data de fechamento vencida | 25 | Deal aberto além do close date implica ciclo atrasado ou deal perdido em silêncio. Win rate cai muito depois do close date. |
-| **CLOSING_SOON_COLD** — fecha em 30d sem atividade recente | 15 | Deal prestes a fechar sem atividade é contraditório: ou o rep trabalha off-CRM (invisível) ou o deal está morrendo. |
-| **SLA_BREACH** — tempo no estágio acima do SLA | 10–25 | SLAs por estágio: LEAD 30d, QUALIFIED 21d, DISCOVERY 14d, DEMO 7d, PROPOSAL 14d, NEGOTIATION 21d. DEMO é o mais crítico (7d): silêncio pós-demo sinaliza desinteresse. |
-| **SINGLE_THREADED** — ENT com apenas 1 contato | 20 | Deals enterprise dependem de multi-stakeholder buy-in. 1 contato = deal morre se o campeão sair. |
-
----
+| **NO_ACTIVITY**, nunca teve atividade | 30 | Pra mim é o sinal mais forte de deal morto. Um deal criado e nunca tocado é abandono completo, então dei o peso mais alto. |
+| **STALE**, sem atividade há 14 dias ou mais | 20 | Parti da prática comum em B2B de que todo deal ativo deveria ser tocado pelo menos a cada duas semanas. Silêncio de 14 dias pra mim já é deal esfriando. |
+| **HIGH_VALUE_COLD**, deal acima de R$50k parado há 7 dias ou mais | +10 | Achei justo que um deal grande pese mais. Um enterprise parado uma semana me preocupa muito mais do que um SMB parado o mesmo tempo, então somei pontos extras. |
+| **OVERDUE**, data de fechamento já vencida | 25 | Quando o deal passa do close date, ou o ciclo atrasou ou ele morreu em silêncio. Como o win rate despenca depois dessa data, tratei como sinal grave. |
+| **CLOSING_SOON_COLD**, fecha em 30 dias mas sem atividade recente | 15 | Isso me parece contraditório: um deal prestes a fechar deveria estar quente. Se está frio, ou o rep trabalha fora do CRM (e eu não enxergo) ou o deal está morrendo. |
+| **SLA_BREACH**, tempo no estágio acima do SLA | 10 a 25 | Defini um SLA por estágio (LEAD 30d, QUALIFIED 21d, DISCOVERY 14d, DEMO 7d, PROPOSAL 14d, NEGOTIATION 21d). Fiz o DEMO ser o mais apertado, com 7 dias, porque silêncio logo depois de uma demo costuma indicar desinteresse. |
+| **SINGLE_THREADED**, conta ENT com só 1 contato | 20 | Deals enterprise dependem de várias pessoas dizendo sim. Se só existe 1 contato, o deal morre caso esse campeão saia, então sinalizo isso de propósito. |
 
 ## Máquina de Estados (CRUD)
+
+Pensei a máquina de estados pra refletir como um funil real funciona, e pra rejeitar coisas que não fazem sentido:
 
 ```
 LEAD       → QUALIFIED | CLOSED_LOST
@@ -64,76 +66,72 @@ NEGOTIATION→ CLOSED_WON | PROPOSAL | CLOSED_LOST
 CLOSED_WON / CLOSED_LOST → (terminais)
 ```
 
-Transições inválidas (pular estágios pra frente) são **rejeitadas**. Transições reversas de um passo são permitidas para corrigir classificações erradas. Qualquer estágio ativo pode ir para CLOSED_LOST (que exige motivo estruturado: `NO_BUDGET`, `LOST_TO_COMPETITOR`, `NO_DECISION`, `OTHER`).
+Eu rejeito transições inválidas, como pular estágios pra frente. Deixei as transições reversas de um passo liberadas porque na prática o rep às vezes classifica errado e precisa corrigir. Qualquer estágio ativo pode ir direto pra CLOSED_LOST, e nesse caso exijo um motivo estruturado (`NO_BUDGET`, `LOST_TO_COMPETITOR`, `NO_DECISION` ou `OTHER`).
 
-Operações suportadas, todas persistindo no banco e refletindo na UI imediatamente: **mover estágio**, **registrar atividade** (CALL/EMAIL/MEETING/NOTE), **agendar próximo passo**, **reatribuir owner**, **fechar deal com motivo**.
+Todas as operações persistem no banco e aparecem na UI na hora: mover estágio, registrar atividade (CALL, EMAIL, MEETING, NOTE), agendar próximo passo, reatribuir owner e fechar deal com motivo.
 
-**Audit log de primeira classe:** todo evento é registrado com timestamp, ação, valores antigo/novo, motivo, **quem fez** (`performedBy`) e **se foi humano ou agente** (`originatedBy`). Visível no painel de cada deal.
-
----
+Tratei o **audit log como parte central do produto**, não como um detalhe. Cada evento guarda timestamp, ação, valores antigo e novo, motivo, quem executou (`performedBy`) e se a origem foi humana ou do agente (`originatedBy`). Tudo isso fica visível no painel de cada deal.
 
 ## Agente de IA
 
-Modelo `gemini-2.5-flash-lite` com **loop de function calling próprio**. O agente faz três coisas: **responde** perguntas sobre o pipeline, **executa** operações de CRM e **redige outreach** com dados reais.
+Aqui foi onde eu mais quis mostrar o meu teto. Usei o `gemini-2.5-flash-lite` e escrevi meu próprio loop de function calling. Eu queria que o agente fizesse três coisas bem feitas: responder perguntas sobre o pipeline, executar operações de CRM, e redigir outreach com dados reais.
 
-### Arquitetura human-in-the-loop (server-gated)
+### Como pensei o human in the loop
 
-A confirmação não é só uma instrução de prompt — é **imposta pela arquitetura**:
+Eu não quis depender só do prompt pra garantir a confirmação, porque seria fácil o modelo "escapar" e executar algo sozinho. Então resolvi impor isso pela própria arquitetura:
 
-1. **`/api/agent`** (fase de chat): read tools executam ao vivo; **write tools NUNCA escrevem no banco aqui** — são validadas (`previewWrite`) e devolvidas como *pending actions*. O modelo, literalmente, não tem como commitar durante a conversa.
-2. **`/api/agent/execute`**: único caminho que grava no banco (`commitWrite`), e só é chamado quando o usuário clica em **Aprovar** nos cartões de preview.
+1. No `/api/agent` (a fase de conversa), as read tools rodam ao vivo, mas as write tools nunca escrevem no banco. Elas passam por uma validação (`previewWrite`) e voltam como ações pendentes. Na prática, o modelo não tem como commitar nada durante o chat.
+2. O `/api/agent/execute` é o único caminho que grava no banco (`commitWrite`), e ele só é chamado quando o usuário clica em Aprovar nos cartões de preview.
 
-Assim, **qualquer ação que afete >1 deal, qualquer fechamento, reatribuição ou outreach redigido** aparece como cartão de preview e exige confirmação explícita. Emails podem ser **aprovados um a um** (com progresso visível) ou todos de uma vez.
+Com isso, qualquer ação que afete mais de um deal, qualquer fechamento, reatribuição ou outreach redigido vira um cartão de preview e exige confirmação explícita. Pensando na confiança do gerente, fiz questão de deixar aprovar os emails um por um (com o progresso aparecendo na tela) ou todos de uma vez.
 
-**Segurança:** o agente nunca inventa IDs, contas, valores ou nomes de contato. Como o dataset não tem contatos individuais, o outreach usa saudação neutra (ex.: "Olá, equipe da [Conta]") em vez de inventar um nome — ou pergunta. Toda ação do agente é gravada no audit log como `originatedBy: 'agent'`.
+Sobre **segurança**, fui rígido: o agente nunca inventa IDs, contas, valores ou nomes de contato. Como o dataset não traz contatos individuais, decidi que o outreach usa uma saudação neutra (algo como "Olá, equipe da [Conta]") em vez de chutar um nome, ou então pergunta. E toda ação do agente entra no audit log marcada como `originatedBy: 'agent'`, pra ficar claro o que foi ele e o que fui eu.
 
-### Ferramentas expostas
+### Ferramentas que expus
 
-| Ferramenta | Tipo | Descrição |
+| Ferramenta | Tipo | O que ela faz |
 |---|---|---|
 | `search_deals` | Leitura | Busca deals com filtros: estágio, owner, segmento, risco, valor mínimo, dias sem atividade, close vencido |
-| `get_deal` | Leitura | Detalhes completos de um deal: campos, atividades, audit log **e notas/comentários do time** |
+| `get_deal` | Leitura | Detalhes completos de um deal: campos, atividades, audit log e as notas do time |
 | `get_pipeline_summary` | Leitura | Agregados: valor total, ponderado, por estágio, distribuição de risco |
 | `get_risky_deals` | Leitura | Top N deals por risk score (mais críticos primeiro) |
-| `draft_email` | Leitura | Reúne contexto completo do deal para redigir um follow-up |
-| `get_calendar_events` | Leitura | Próximos compromissos do Google Calendar (vinculados a deals quando possível) |
-| `draft_followup_email` | **Escrita** | Email de follow-up: o agente compõe assunto+corpo → 1 cartão revisável por email → ao aprovar, agenda atividade EMAIL e enfileira pro owner |
-| `update_stage` | **Escrita** | Move deal para novo estágio (valida a máquina de estados) |
-| `log_activity` | **Escrita** | Registra CALL/EMAIL/MEETING/NOTE com timestamp e notas |
-| `schedule_next_step` | **Escrita** | Agenda atividade planejada com data de vencimento |
-| `reassign_owner` | **Escrita** | Reatribui deal para outro rep |
-| `close_deal` | **Escrita** | Fecha como CLOSED_WON ou CLOSED_LOST (com motivo estruturado) |
-| `queue_for_review` | **Escrita** | Enfileira um deal para revisão do owner (nota + lembrete) |
-| `create_reminder` | **Escrita** | Cria lembrete/alerta no sino de notificações |
-| `add_meeting_note` | **Escrita** | Adiciona nota a um evento do calendário |
+| `draft_email` | Leitura | Reúne o contexto completo do deal pra eu redigir um follow-up |
+| `get_calendar_events` | Leitura | Próximos compromissos do Google Calendar, vinculados a deals quando dá |
+| `draft_followup_email` | Escrita | Email de follow-up: o agente compõe assunto e corpo, gera 1 cartão revisável por email e, ao aprovar, agenda a atividade EMAIL e enfileira pro owner |
+| `update_stage` | Escrita | Move o deal para um novo estágio, validando a máquina de estados |
+| `log_activity` | Escrita | Registra CALL, EMAIL, MEETING ou NOTE com timestamp e notas |
+| `schedule_next_step` | Escrita | Agenda uma atividade planejada com data de vencimento |
+| `reassign_owner` | Escrita | Reatribui o deal para outro rep |
+| `close_deal` | Escrita | Fecha como CLOSED_WON ou CLOSED_LOST com motivo estruturado |
+| `queue_for_review` | Escrita | Enfileira um deal pra revisão do owner (nota mais lembrete) |
+| `create_reminder` | Escrita | Cria um lembrete no sino de notificações |
+| `add_meeting_note` | Escrita | Adiciona uma nota a um evento do calendário |
 
-### Exemplo ponta a ponta (o caso do PDF)
+### O exemplo ponta a ponta do case
 
-> *"Pra todo deal acima de R$50.000 em estágio PROPOSAL sem atividade nos últimos 7+ dias, redija um email de follow-up pro contato principal adaptado ao ponto do ciclo, registre a atividade planejada como EMAIL agendada pra amanhã de manhã, e enfileire pra revisão do owner. Me mostre o que vai fazer antes de executar."*
+> *"Pra todo deal acima de R$50.000 em estágio PROPOSAL sem atividade nos últimos 7+ dias, redija um email de follow-up pro contato principal adaptado ao ponto do ciclo onde ele está, registre a atividade planejada como EMAIL agendada pra amanhã de manhã, e enfileire pra revisão do owner. Me mostre o que vai fazer antes de executar."*
 
-O agente: (1) chama `search_deals` (PROPOSAL, `minAmount` 50000, `minDaysSinceActivity` 7) para descobrir os deals reais; (2) compõe um email por deal adaptado ao estágio; (3) chama `draft_followup_email` uma vez por deal → cada email vira um cartão revisável com assunto+corpo; (4) o gerente lê email por email e aprova (individual ou em lote); (5) ao aprovar, cada email é agendado como atividade EMAIL para amanhã de manhã e enfileirado pro owner, com registro no audit log como ação do agente.
-
----
+Foi exatamente esse fluxo que eu desenhei o agente pra resolver. Ele começa chamando `search_deals` (PROPOSAL, `minAmount` 50000, `minDaysSinceActivity` 7) pra descobrir os deals reais. Depois compõe um email por deal adaptado ao estágio, e chama `draft_followup_email` uma vez por deal, de modo que cada email vira um cartão revisável com assunto e corpo. Aí o gerente lê email por email e aprova, no ritmo dele, individualmente ou em lote. No momento em que aprova, cada email é agendado como atividade EMAIL pra amanhã de manhã e enfileirado pro owner, e tudo entra no audit log como ação do agente.
 
 ## Visualizações & Dashboard
 
-Dashboard com KPIs (pipeline aberto, pipeline ponderado, contagens de risco, fechando no mês) e charts em Recharts: funil por estágio, valor por estágio, carga por owner, win rate por segmento, distribuição de risco — com filtros e saved views.
+Montei um dashboard com os KPIs que eu acho que um gerente olha primeiro numa segunda de manhã: pipeline aberto, pipeline ponderado, contagens de risco e o que fecha no mês. Em cima disso, usei o Recharts pra trazer funil por estágio, valor por estágio, carga por owner, win rate por segmento e distribuição de risco, com filtros e saved views.
 
----
+## Extras que decidi implementar
 
-## Extras implementados (bônus do case)
+Fui além do mínimo em alguns pontos que eu achei que deixavam o produto mais real:
 
-- **Risk scoring composto 0–100** (em vez de flags binárias).
-- **Autenticação por usuário** (login Google): cada usuário tem sua própria sessão e aparece no audit trail; o primeiro a conectar assume a persona de Owner.
-- **Colaboração:** comentários/notas por deal com **@menção** de membros do time e notificações.
-- **Integração com Google Calendar:** visão de agenda, vínculo evento↔deal e notas de reunião acessíveis pelo agente.
-- **Filtros multi-seleção** e **Kanban** com colunas ocultáveis + visão de deals ganhos/perdidos.
-
----
+- **Risk scoring composto de 0 a 100**, no lugar de flags binárias
+- **Autenticação por usuário** com login Google, pra cada pessoa ter a própria sessão e aparecer no audit trail. O primeiro a conectar assume a persona de Owner
+- **Colaboração** com comentários e notas por deal, incluindo @menção de membros do time e notificações
+- **Integração com Google Calendar**, com visão de agenda, vínculo entre evento e deal e notas de reunião que o agente consegue ler
+- **Filtros multi-seleção** e um **Kanban** com colunas que dá pra ocultar, além da visão dos deals ganhos e perdidos
 
 ## Decisões de Design
 
-- **Neon (Postgres) em vez de SQLite:** roda serverless na Vercel sem filesystem persistente; tier gratuito; mesmo SQL em dev e prod.
-- **Human-in-the-loop imposto pelo servidor:** o chat só *propõe*; o commit vive num endpoint separado disparado pelo botão de confirmação. Mais seguro que confiar que o modelo "vai pedir confirmação".
-- **Gemini `flash-lite` + retry com backoff:** free tier com limites generosos (~15 RPM / 1000 RPD) e retry automático em 429 para suavizar picos.
-- **Audit log como produto de primeira classe:** diferencia ações humanas de ações do agente, contando a história de cada deal.
+Algumas escolhas que eu quis deixar registradas:
+
+- **Neon (Postgres) no lugar de SQLite.** Como rodo na Vercel, não tenho filesystem persistente, então um Postgres serverless me dá o mesmo SQL em dev e em produção sem dor de cabeça, e ainda no tier gratuito.
+- **Human in the loop imposto pelo servidor.** Preferi separar o "propor" do "executar" em endpoints diferentes a confiar que o modelo vai lembrar de pedir confirmação. Achei mais seguro.
+- **Gemini flash-lite com retry e backoff.** Fiquei no free tier (cerca de 15 req/min e 1000 por dia) e adicionei retry automático no erro 429, pra suavizar os picos sem o usuário ver falha.
+- **Audit log como produto de primeira classe.** Fiz ele diferenciar ação humana de ação do agente justamente pra contar a história de cada deal de forma clara.
